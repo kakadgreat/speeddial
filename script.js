@@ -1,18 +1,84 @@
-// Simple self-hosted Speed Dial clone
-const STORAGE_KEY = "mySpeedDialStateV1";
-const THEME_KEY = "mySpeedDialTheme";
+// Self-hosted Speed Dial with settings + config.json on GitHub
 
+const STORAGE_KEY = "mySpeedDialStateV2";
+const LAST_GROUP_KEY = "mySpeedDialLastGroup";
+const REMOTE_CONFIG_URL = "config.json";
+
+let state = null;
+let activeGroupId = null;
+
+// DOM elements
+const groupTabsEl = document.getElementById("groupTabs");
+const dialGridEl = document.getElementById("dialGrid");
+const toolbarEl = document.getElementById("toolbar");
+
+const quickThemeButton = document.getElementById("quickThemeButton");
+const quickThemeLabel = document.getElementById("quickThemeLabel");
+const quickImportButton = document.getElementById("quickImportButton");
+const quickImportInput = document.getElementById("quickImportInput");
+const settingsButton = document.getElementById("settingsButton");
+
+const addGroupButton = document.getElementById("addGroupButton");
+const addDialButton = document.getElementById("addDialButton");
+
+const modalBackdrop = document.getElementById("modalBackdrop");
+const modalTitle = document.getElementById("modalTitle");
+const modalBody = document.getElementById("modalBody");
+const modalCloseButton = document.getElementById("modalCloseButton");
+
+const settingsBackdrop = document.getElementById("settingsBackdrop");
+const settingsCloseButton = document.getElementById("settingsCloseButton");
+
+const settingsTabLinks = document.querySelectorAll(".settings-tab-link");
+const settingsTabs = document.querySelectorAll(".settings-tab");
+
+const columnsSlider = document.getElementById("columnsSlider");
+const columnsLabel = document.getElementById("columnsLabel");
+const spacingSlider = document.getElementById("spacingSlider");
+const spacingLabel = document.getElementById("spacingLabel");
+const widthSlider = document.getElementById("widthSlider");
+const widthLabel = document.getElementById("widthLabel");
+const centerVerticallyCheckbox = document.getElementById(
+  "centerVerticallyCheckbox"
+);
+const showAddButtonsCheckbox = document.getElementById(
+  "showAddButtonsCheckbox"
+);
+const openInNewTabCheckbox =
+  document.getElementById("openInNewTabCheckbox");
+
+const lightBgColorInput = document.getElementById("lightBgColorInput");
+const lightBgImageInput = document.getElementById("lightBgImageInput");
+const darkBgColorInput = document.getElementById("darkBgColorInput");
+const darkBgImageInput = document.getElementById("darkBgImageInput");
+
+const rememberGroupCheckbox = document.getElementById(
+  "rememberGroupCheckbox"
+);
+const groupsVisibilityList =
+  document.getElementById("groupsVisibilityList");
+
+const exportButton = document.getElementById("exportButton");
+const settingsImportButton =
+  document.getElementById("settingsImportButton");
+const settingsImportInput =
+  document.getElementById("settingsImportInput");
+const importUrlInput = document.getElementById("importUrlInput");
+const importUrlButton = document.getElementById("importUrlButton");
+const copyJsonButton = document.getElementById("copyJsonButton");
+const resetButton = document.getElementById("resetButton");
+
+// default state
 const defaultState = {
-  groups: [
-    { id: 0, title: "Home", position: 0 }
-  ],
+  groups: [{ id: 0, title: "Home", position: 0 }],
   dials: [
     {
       id: 1,
       groupId: 0,
       title: "Google",
       url: "https://www.google.com",
-      thumbnail: "https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_160x56dp.png",
+      thumbnail:
+        "https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_160x56dp.png",
       position: 0
     },
     {
@@ -26,63 +92,207 @@ const defaultState = {
   ],
   preferences: {
     columns: 6
+  },
+  settings: {
+    themeMode: "auto", // auto | light | dark
+    gridColumns: 6,
+    gridSpacing: 16,
+    maxWidth: 1440,
+    centerVertically: false,
+    showAddButtons: true,
+    openInNewTab: true,
+    rememberLastGroup: true,
+    hiddenGroupIds: [],
+    backgrounds: {
+      light: {
+        color: "#f5f5f5",
+        image: ""
+      },
+      dark: {
+        color: "#202124",
+        image: ""
+      }
+    }
   }
 };
 
-let state = loadState();
-let activeGroupId =
-  state.groups.length > 0 ? state.groups[0].id : null;
+// Startup
+document.addEventListener("DOMContentLoaded", () => {
+  init();
+});
 
-// Elements
-const groupTabsEl = document.getElementById("groupTabs");
-const dialGridEl = document.getElementById("dialGrid");
-const themeToggleEl = document.getElementById("themeToggle");
-const addGroupButton = document.getElementById("addGroupButton");
-const addDialButton = document.getElementById("addDialButton");
-const importInput = document.getElementById("importInput");
-const exportButton = document.getElementById("exportButton");
+async function init() {
+  const local = loadStateFromLocalStorage();
+  if (local) {
+    state = normalizeState(local);
+  } else {
+    state = await loadStateFromRemoteOrDefault();
+  }
 
-const modalBackdrop = document.getElementById("modalBackdrop");
-const modalTitle = document.getElementById("modalTitle");
-const modalBody = document.getElementById("modalBody");
-const modalCloseButton = document.getElementById("modalCloseButton");
+  activeGroupId = determineInitialGroupId();
+  applyThemeFromSettings();
+  applyLayoutSettings();
+  renderAll();
+  attachEvents();
+}
 
-// ---------- Initialization ----------
+// ---------- State load/save ----------
 
-applySavedTheme();
-renderAll();
-attachEvents();
-
-// ---------- State helpers ----------
-
-function loadState() {
+function loadStateFromLocalStorage() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return structuredClone(defaultState);
-    const parsed = JSON.parse(raw);
-    // Basic sanity check
-    if (!parsed.groups || !parsed.dials) {
-      return structuredClone(defaultState);
-    }
-    return parsed;
+    if (!raw) return null;
+    return JSON.parse(raw);
   } catch (e) {
-    console.error("Failed to load state, using default", e);
-    return structuredClone(defaultState);
+    console.error("Failed to read local storage", e);
+    return null;
   }
 }
 
-function saveState() {
+async function loadStateFromRemoteOrDefault() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    const res = await fetch(REMOTE_CONFIG_URL, { cache: "no-cache" });
+    if (res.ok) {
+      const json = await res.json();
+      const converted = convertRemoteConfig(json);
+      if (converted) {
+        const normalized = normalizeState(converted);
+        saveState(normalized);
+        return normalized;
+      }
+    }
+  } catch (e) {
+    console.warn("Remote config load failed, using default", e);
+  }
+  const def = structuredClone(defaultState);
+  saveState(def);
+  return def;
+}
+
+// convert either Speed Dial 2 export or internal format
+function convertRemoteConfig(json) {
+  if (!json) return null;
+
+  // internal format already
+  if (
+    Array.isArray(json.groups) &&
+    Array.isArray(json.dials) &&
+    json.dials.length &&
+    json.dials[0].groupId !== undefined
+  ) {
+    return json;
+  }
+
+  // Speed Dial 2 export: has idgroup
+  if (
+    Array.isArray(json.dials) &&
+    Array.isArray(json.groups) &&
+    json.dials.length &&
+    json.dials[0].idgroup !== undefined
+  ) {
+    return convertSpeedDial2Export(json);
+  }
+
+  return null;
+}
+
+function normalizeState(raw) {
+  const base = structuredClone(defaultState);
+
+  const result = {
+    groups: raw.groups || base.groups,
+    dials: raw.dials || base.dials,
+    preferences: Object.assign({}, base.preferences, raw.preferences || {}),
+    settings: Object.assign({}, base.settings, raw.settings || {})
+  };
+
+  if (!Array.isArray(result.settings.hiddenGroupIds)) {
+    result.settings.hiddenGroupIds = [];
+  }
+  if (!result.settings.backgrounds) {
+    result.settings.backgrounds = base.settings.backgrounds;
+  } else {
+    result.settings.backgrounds.light =
+      result.settings.backgrounds.light || base.settings.backgrounds.light;
+    result.settings.backgrounds.dark =
+      result.settings.backgrounds.dark || base.settings.backgrounds.dark;
+  }
+
+  return result;
+}
+
+function saveState(newState = state) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
   } catch (e) {
     console.error("Failed to save state", e);
   }
 }
 
-function nextId(collection) {
-  return collection.length
-    ? Math.max(...collection.map((x) => x.id)) + 1
-    : 1;
+function determineInitialGroupId() {
+  if (!state.groups.length) return null;
+
+  if (state.settings.rememberLastGroup) {
+    const last = localStorage.getItem(LAST_GROUP_KEY);
+    if (last !== null) {
+      const id = Number(last);
+      const exists = state.groups.some((g) => g.id === id);
+      if (exists) return id;
+    }
+  }
+  return state.groups[0].id;
+}
+
+// ---------- Theme and layout ----------
+
+function applyThemeFromSettings() {
+  const mode = state.settings.themeMode || "auto";
+  let theme = "light";
+  if (mode === "light" || mode === "dark") {
+    theme = mode;
+  } else {
+    const prefersDark =
+      window.matchMedia &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches;
+    theme = prefersDark ? "dark" : "light";
+  }
+
+  document.documentElement.setAttribute("data-theme", theme);
+  quickThemeLabel.textContent =
+    mode.charAt(0).toUpperCase() + mode.slice(1);
+
+  const bgConfig =
+    theme === "dark"
+      ? state.settings.backgrounds.dark
+      : state.settings.backgrounds.light;
+
+  document.body.style.backgroundColor = bgConfig.color || "";
+  if (bgConfig.image) {
+    document.body.style.backgroundImage = `url("${bgConfig.image}")`;
+  } else {
+    document.body.style.backgroundImage = "none";
+  }
+}
+
+function applyLayoutSettings() {
+  const s = state.settings;
+
+  const cols = s.gridColumns || 6;
+  const spacing = s.gridSpacing || 16;
+  const width = s.maxWidth || 1440;
+
+  dialGridEl.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+  document.documentElement.style.setProperty("--grid-gap", `${spacing}px`);
+  document.documentElement.style.setProperty(
+    "--app-max-width",
+    `${width}px`
+  );
+
+  document.getElementById("app").style.justifyContent = s.centerVertically
+    ? "center"
+    : "flex-start";
+
+  toolbarEl.style.display = s.showAddButtons ? "flex" : "none";
 }
 
 // ---------- Rendering ----------
@@ -90,43 +300,66 @@ function nextId(collection) {
 function renderAll() {
   renderGroups();
   renderDials();
+  updateSettingsUIValues();
+}
+
+function visibleGroups() {
+  const hiddenIds = new Set(state.settings.hiddenGroupIds || []);
+  return state.groups.filter((g) => !hiddenIds.has(g.id));
 }
 
 function renderGroups() {
   groupTabsEl.innerHTML = "";
 
-  state.groups
+  const groupsToShow = visibleGroups()
     .slice()
-    .sort((a, b) => a.position - b.position)
-    .forEach((group) => {
-      const btn = document.createElement("button");
-      btn.className = "group-tab" + (group.id === activeGroupId ? " active" : "");
-      btn.textContent = group.title;
-      btn.addEventListener("click", () => {
-        activeGroupId = group.id;
-        renderGroups();
-        renderDials();
-      });
+    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
 
-      // small close button (except if only one group)
-      if (state.groups.length > 1) {
-        const close = document.createElement("span");
-        close.textContent = "×";
-        close.className = "close";
-        close.addEventListener("click", (e) => {
-          e.stopPropagation();
-          deleteGroup(group.id);
-        });
-        btn.appendChild(close);
+  if (!groupsToShow.length) return;
+
+  if (!groupsToShow.some((g) => g.id === activeGroupId)) {
+    activeGroupId = groupsToShow[0].id;
+  }
+
+  groupsToShow.forEach((group) => {
+    const btn = document.createElement("button");
+    btn.className =
+      "group-tab" + (group.id === activeGroupId ? " active" : "");
+    btn.textContent = group.title;
+    btn.addEventListener("click", () => {
+      activeGroupId = group.id;
+      if (state.settings.rememberLastGroup) {
+        localStorage.setItem(LAST_GROUP_KEY, String(activeGroupId));
       }
-
-      groupTabsEl.appendChild(btn);
+      renderGroups();
+      renderDials();
     });
+
+    if (state.groups.length > 1) {
+      const close = document.createElement("span");
+      close.textContent = "×";
+      close.className = "close";
+      close.addEventListener("click", (e) => {
+        e.stopPropagation();
+        deleteGroup(group.id);
+      });
+      btn.appendChild(close);
+    }
+
+    groupTabsEl.appendChild(btn);
+  });
 }
 
 function renderDials() {
   dialGridEl.innerHTML = "";
   if (activeGroupId == null) return;
+
+  const s = state.settings;
+  const openInNewTab = s.openInNewTab !== false;
+
+  const effectiveCols =
+    window.innerWidth < 600 ? 2 : s.gridColumns || 6;
+  dialGridEl.style.gridTemplateColumns = `repeat(${effectiveCols}, minmax(0, 1fr))`;
 
   const dials = state.dials
     .filter((d) => d.groupId === activeGroupId)
@@ -136,11 +369,12 @@ function renderDials() {
   dials.forEach((dial) => {
     const a = document.createElement("a");
     a.href = dial.url;
-    a.target = "_blank";
-    a.rel = "noopener noreferrer";
+    if (openInNewTab) {
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+    }
     a.className = "dial";
 
-    // Thumbnail
     const thumb = document.createElement("div");
     thumb.className = "dial-thumbnail";
 
@@ -157,7 +391,6 @@ function renderDials() {
       thumb.appendChild(createFaviconFallback(dial));
     }
 
-    // Footer
     const footer = document.createElement("div");
     footer.className = "dial-footer";
 
@@ -204,45 +437,288 @@ function createFaviconFallback(dial) {
   return div;
 }
 
-// ---------- Events ----------
+// ---------- Event wiring ----------
 
 function attachEvents() {
-  themeToggleEl.addEventListener("click", toggleTheme);
+  window.addEventListener("resize", () => {
+    renderDials();
+  });
+
+  quickThemeButton.addEventListener("click", () => {
+    cycleThemeMode();
+  });
+
+  quickImportButton.addEventListener("click", () => {
+    quickImportInput.click();
+  });
+
+  quickImportInput.addEventListener("change", handleImportFromFile);
+
+  settingsButton.addEventListener("click", () => {
+    openSettings();
+  });
+
   addGroupButton.addEventListener("click", () => openAddGroupModal());
   addDialButton.addEventListener("click", () => openAddDialModal());
-  importInput.addEventListener("change", handleImportJson);
-  exportButton.addEventListener("click", exportCurrentState);
+
   modalCloseButton.addEventListener("click", closeModal);
   modalBackdrop.addEventListener("click", (e) => {
     if (e.target === modalBackdrop) closeModal();
   });
-}
 
-// ---------- Theme ----------
+  settingsCloseButton.addEventListener("click", closeSettings);
+  settingsBackdrop.addEventListener("click", (e) => {
+    if (e.target === settingsBackdrop) closeSettings();
+  });
 
-function applySavedTheme() {
-  const saved = localStorage.getItem(THEME_KEY);
-  if (saved === "dark" || saved === "light") {
-    document.documentElement.setAttribute("data-theme", saved);
-  } else {
-    // default: match prefers-color-scheme
-    const prefersDark = window.matchMedia &&
-      window.matchMedia("(prefers-color-scheme: dark)").matches;
-    document.documentElement.setAttribute(
-      "data-theme",
-      prefersDark ? "dark" : "light"
+  settingsTabLinks.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const tab = btn.dataset.tab;
+      switchSettingsTab(tab);
+    });
+  });
+
+  // theme mode segmented control
+  document
+    .querySelectorAll(".seg-btn")
+    .forEach((btn) =>
+      btn.addEventListener("click", () =>
+        setThemeModeFromButton(btn.dataset.mode)
+      )
     );
+
+  columnsSlider.addEventListener("input", () => {
+    state.settings.gridColumns = Number(columnsSlider.value);
+    applyLayoutSettings();
+    renderDials();
+    updateSettingsUIValues();
+    saveState();
+  });
+
+  spacingSlider.addEventListener("input", () => {
+    state.settings.gridSpacing = Number(spacingSlider.value);
+    applyLayoutSettings();
+    updateSettingsUIValues();
+    saveState();
+  });
+
+  widthSlider.addEventListener("input", () => {
+    state.settings.maxWidth = Number(widthSlider.value);
+    applyLayoutSettings();
+    updateSettingsUIValues();
+    saveState();
+  });
+
+  centerVerticallyCheckbox.addEventListener("change", () => {
+    state.settings.centerVertically = centerVerticallyCheckbox.checked;
+    applyLayoutSettings();
+    saveState();
+  });
+
+  showAddButtonsCheckbox.addEventListener("change", () => {
+    state.settings.showAddButtons = showAddButtonsCheckbox.checked;
+    applyLayoutSettings();
+    saveState();
+  });
+
+  openInNewTabCheckbox.addEventListener("change", () => {
+    state.settings.openInNewTab = openInNewTabCheckbox.checked;
+    saveState();
+    renderDials();
+  });
+
+  // theme backgrounds
+  lightBgColorInput.addEventListener("input", () => {
+    state.settings.backgrounds.light.color = lightBgColorInput.value;
+    applyThemeFromSettings();
+    saveState();
+  });
+  lightBgImageInput.addEventListener("change", () => {
+    state.settings.backgrounds.light.image = lightBgImageInput.value.trim();
+    applyThemeFromSettings();
+    saveState();
+  });
+  darkBgColorInput.addEventListener("input", () => {
+    state.settings.backgrounds.dark.color = darkBgColorInput.value;
+    applyThemeFromSettings();
+    saveState();
+  });
+  darkBgImageInput.addEventListener("change", () => {
+    state.settings.backgrounds.dark.image = darkBgImageInput.value.trim();
+    applyThemeFromSettings();
+    saveState();
+  });
+
+  // groups tab
+  rememberGroupCheckbox.addEventListener("change", () => {
+    state.settings.rememberLastGroup = rememberGroupCheckbox.checked;
+    saveState();
+  });
+
+  // system tab
+  exportButton.addEventListener("click", exportCurrentState);
+  settingsImportButton.addEventListener("click", () =>
+    settingsImportInput.click()
+  );
+  settingsImportInput.addEventListener("change", handleImportFromFile);
+
+  importUrlButton.addEventListener("click", async () => {
+    const url = importUrlInput.value.trim();
+    if (!url) return;
+    if (!confirm("Load config from this URL and replace current data?")) {
+      return;
+    }
+    try {
+      const res = await fetch(url, { cache: "no-cache" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const json = await res.json();
+      const converted = convertRemoteConfig(json);
+      if (!converted) {
+        alert("Could not understand JSON from that URL.");
+        return;
+      }
+      state = normalizeState(converted);
+      saveState();
+      activeGroupId = determineInitialGroupId();
+      applyThemeFromSettings();
+      applyLayoutSettings();
+      renderAll();
+      alert("Imported config from URL.");
+    } catch (e) {
+      console.error(e);
+      alert("Failed to import from URL.");
+    }
+  });
+
+  copyJsonButton.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(state, null, 2));
+      alert("Current config copied to clipboard. Paste into config.json in GitHub.");
+    } catch (e) {
+      alert("Clipboard copy failed. See console for JSON.");
+      console.log("Config JSON:", JSON.stringify(state, null, 2));
+    }
+  });
+
+  resetButton.addEventListener("click", () => {
+    if (!confirm("Reset to default layout? This clears local storage.")) return;
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(LAST_GROUP_KEY);
+    state = structuredClone(defaultState);
+    saveState();
+    activeGroupId = determineInitialGroupId();
+    applyThemeFromSettings();
+    applyLayoutSettings();
+    renderAll();
+  });
+}
+
+// ---------- Settings UI helpers ----------
+
+function openSettings() {
+  updateSettingsUIValues();
+  settingsBackdrop.classList.remove("hidden");
+}
+
+function closeSettings() {
+  settingsBackdrop.classList.add("hidden");
+}
+
+function switchSettingsTab(tab) {
+  settingsTabLinks.forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.tab === tab);
+  });
+  settingsTabs.forEach((panel) => {
+    panel.classList.toggle(
+      "active",
+      panel.id === "settingsTab" + capitalize(tab)
+    );
+  });
+  document.getElementById("settingsTitle").textContent =
+    capitalize(tab);
+}
+
+function updateSettingsUIValues() {
+  const s = state.settings;
+
+  columnsSlider.value = s.gridColumns || 6;
+  columnsLabel.textContent = `${columnsSlider.value} columns`;
+
+  spacingSlider.value = s.gridSpacing || 16;
+  spacingLabel.textContent = `${spacingSlider.value}px spacing`;
+
+  widthSlider.value = s.maxWidth || 1440;
+  widthLabel.textContent = `${widthSlider.value}px max width`;
+
+  centerVerticallyCheckbox.checked = !!s.centerVertically;
+  showAddButtonsCheckbox.checked = !!s.showAddButtons;
+  openInNewTabCheckbox.checked = s.openInNewTab !== false;
+
+  document
+    .querySelectorAll(".seg-btn")
+    .forEach((btn) =>
+      btn.classList.toggle("active", btn.dataset.mode === s.themeMode)
+    );
+  quickThemeLabel.textContent =
+    s.themeMode.charAt(0).toUpperCase() + s.themeMode.slice(1);
+
+  lightBgColorInput.value = s.backgrounds.light.color || "#f5f5f5";
+  lightBgImageInput.value = s.backgrounds.light.image || "";
+  darkBgColorInput.value = s.backgrounds.dark.color || "#202124";
+  darkBgImageInput.value = s.backgrounds.dark.image || "";
+
+  rememberGroupCheckbox.checked = !!s.rememberLastGroup;
+
+  groupsVisibilityList.innerHTML = "";
+  state.groups
+    .slice()
+    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+    .forEach((g) => {
+      const label = document.createElement("label");
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = !(s.hiddenGroupIds || []).includes(g.id);
+      checkbox.addEventListener("change", () => {
+        toggleGroupVisibility(g.id, checkbox.checked);
+      });
+      label.appendChild(checkbox);
+      label.appendChild(document.createTextNode(" " + g.title));
+      groupsVisibilityList.appendChild(label);
+    });
+}
+
+function toggleGroupVisibility(groupId, visible) {
+  const list = new Set(state.settings.hiddenGroupIds || []);
+  if (visible) {
+    list.delete(groupId);
+  } else {
+    list.add(groupId);
   }
+  state.settings.hiddenGroupIds = Array.from(list);
+  saveState();
+  renderGroups();
+  renderDials();
 }
 
-function toggleTheme() {
-  const current = document.documentElement.getAttribute("data-theme");
-  const next = current === "dark" ? "light" : "dark";
-  document.documentElement.setAttribute("data-theme", next);
-  localStorage.setItem(THEME_KEY, next);
+function cycleThemeMode() {
+  const order = ["auto", "light", "dark"];
+  const current = state.settings.themeMode || "auto";
+  const idx = order.indexOf(current);
+  const next = order[(idx + 1) % order.length];
+  state.settings.themeMode = next;
+  applyThemeFromSettings();
+  updateSettingsUIValues();
+  saveState();
 }
 
-// ---------- Modals & Forms ----------
+function setThemeModeFromButton(mode) {
+  state.settings.themeMode = mode;
+  applyThemeFromSettings();
+  updateSettingsUIValues();
+  saveState();
+}
+
+// ---------- Modals for add/edit ----------
 
 function openModal(titleText, bodyNode) {
   modalTitle.textContent = titleText;
@@ -341,9 +817,8 @@ function openDialFormModal(title, existingDial) {
   groupLabel.textContent = "Group";
   const groupSelect = document.createElement("select");
 
-  state.groups
-    .slice()
-    .sort((a, b) => a.position - b.position)
+  visibleGroups()
+    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
     .forEach((g) => {
       const opt = document.createElement("option");
       opt.value = g.id;
@@ -410,7 +885,13 @@ function openDialFormModal(title, existingDial) {
   openModal(title, container);
 }
 
-// ---------- CRUD operations ----------
+// ---------- CRUD ----------
+
+function nextId(collection) {
+  return collection.length
+    ? Math.max(...collection.map((x) => x.id)) + 1
+    : 1;
+}
 
 function addGroup(title) {
   const id = nextId(state.groups);
@@ -434,10 +915,12 @@ function deleteGroup(groupId) {
 
   state.groups = state.groups.filter((g) => g.id !== groupId);
   state.dials = state.dials.filter((d) => d.groupId !== groupId);
+  state.settings.hiddenGroupIds = (state.settings.hiddenGroupIds || []).filter(
+    (id) => id !== groupId
+  );
 
-  if (activeGroupId === groupId) {
-    activeGroupId = state.groups.length ? state.groups[0].id : null;
-  }
+  const visible = visibleGroups();
+  activeGroupId = visible.length ? visible[0].id : null;
 
   saveState();
   renderAll();
@@ -484,7 +967,7 @@ function deleteDial(id) {
 
 // ---------- Import / Export ----------
 
-function handleImportJson(event) {
+function handleImportFromFile(event) {
   const file = event.target.files[0];
   if (!file) return;
 
@@ -492,32 +975,29 @@ function handleImportJson(event) {
   reader.onload = (e) => {
     try {
       const json = JSON.parse(e.target.result);
-      const converted = convertSpeedDial2Export(json);
+      const converted = convertRemoteConfig(json);
       if (!converted) {
         alert("Could not parse JSON format.");
         return;
       }
-      state = converted;
-      activeGroupId = state.groups.length ? state.groups[0].id : null;
+      state = normalizeState(converted);
       saveState();
+      activeGroupId = determineInitialGroupId();
+      applyThemeFromSettings();
+      applyLayoutSettings();
       renderAll();
-      alert("Import complete. Your tiles are now loaded.");
+      alert("Import complete.");
     } catch (err) {
       console.error("Import error", err);
       alert("Failed to import JSON.");
     } finally {
-      // reset input so the same file can be chosen again later if needed
-      importInput.value = "";
+      event.target.value = "";
     }
   };
   reader.readAsText(file);
 }
 
 function convertSpeedDial2Export(json) {
-  if (!json || !Array.isArray(json.dials) || !Array.isArray(json.groups)) {
-    return null;
-  }
-
   const groups = json.groups.map((g) => ({
     id: g.id,
     title: g.title,
@@ -554,4 +1034,10 @@ function exportCurrentState() {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+// ---------- Utils ----------
+
+function capitalize(str) {
+  return str.charAt(0).toUpperCase() + str.slice(1);
 }
