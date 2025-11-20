@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>My Speed Dial</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="app-header">
+      <div class="app-title">
+        <span class="logo-dot"></span>
+        <span>My Speed Dial</span>
+      </div>
+
+      <div class="header-actions">
+        <button id="themeToggle" class="btn btn-ghost" title="Toggle dark/light">
+          Theme
+        </button>
+
+        <label class="btn btn-ghost file-label" title="Import Speed Dial 2 export JSON">
+          Import JSON
+          <input type="file" id="importInput" accept="application/json" hidden />
+        </label>
+
+        <button id="exportButton" class="btn btn-ghost" title="Export current config">
+          Export JSON
+        </button>
+      </div>
+    </header>
+
+    <nav id="groupTabs" class="group-tabs"></nav>
+
+    <main>
+      <section class="toolbar">
+        <button id="addGroupButton" class="btn">Add Group</button>
+        <button id="addDialButton" class="btn">Add Tile</button>
+      </section>
+
+      <section id="dialGrid" class="dial-grid"></section>
+    </main>
+
+    <!-- Simple modal for forms -->
+    <div id="modalBackdrop" class="modal-backdrop hidden">
+      <div class="modal">
+        <div class="modal-header">
+          <h2 id="modalTitle"></h2>
+          <button id="modalCloseButton" class="btn-icon" aria-label="Close">&times;</button>
+        </div>
+        <div id="modalBody" class="modal-body"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
